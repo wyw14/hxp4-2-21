@@ -34,6 +34,7 @@ export class HexGridRenderer {
   private pathPreviewGroup: SVGGElement | null = null;
   private draftPathGroup: SVGGElement | null = null;
   private draftPath: HexCoord[] = [];
+  private draftStartCoord: HexCoord | null = null;
   private draftCellKeys = new Set<string>();
   private draftValidation: PathValidationResult | null = null;
   private reachableKeys = new Set<string>();
@@ -57,8 +58,9 @@ export class HexGridRenderer {
     this.render();
   }
 
-  setDraftPath(path: HexCoord[], validation: PathValidationResult | null): void {
+  setDraftPath(path: HexCoord[], startCoord: HexCoord, validation: PathValidationResult | null): void {
     this.draftPath = path;
+    this.draftStartCoord = startCoord;
     this.draftValidation = validation;
     this.draftCellKeys.clear();
     path.forEach((coord) => this.draftCellKeys.add(coordKey(coord)));
@@ -360,12 +362,12 @@ export class HexGridRenderer {
       this.draftPathGroup = null;
     }
 
-    if (this.draftPath.length === 0 || !this.gameState) return;
+    if (this.draftPath.length === 0 || !this.draftStartCoord) return;
 
     this.draftPathGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     this.draftPathGroup.setAttribute('pointer-events', 'none');
 
-    const fullPath = [this.gameState.startCoord, ...this.draftPath];
+    const fullPath = [this.draftStartCoord, ...this.draftPath];
     const hasErrors = this.draftValidation && !this.draftValidation.isValid;
 
     for (let i = 0; i < fullPath.length - 1; i++) {

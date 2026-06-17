@@ -24,8 +24,20 @@ export class FungiGame {
   private draftState: DraftState = {
     isDraftMode: false,
     draftPath: [],
+    draftStartCoord: { q: 0, r: 0 },
     validationResult: null,
   };
+
+  private getDraftStartCoord(): HexCoord {
+    if (!this.gameState) {
+      return { q: 0, r: 0 };
+    }
+    return this.gameState.myceliumCells[this.gameState.myceliumCells.length - 1];
+  }
+
+  private refreshDraftStartCoord(): void {
+    this.draftState.draftStartCoord = this.getDraftStartCoord();
+  }
 
   constructor() {
     const hexContainer = document.getElementById('hex-container')!;
@@ -178,11 +190,12 @@ export class FungiGame {
     const draftInfo = document.createElement('div');
     draftInfo.className = 'draft-info';
 
+    const stepCount = validation?.stepCount ?? path.length;
     const stepsRow = document.createElement('div');
     stepsRow.className = 'draft-steps-row';
     stepsRow.innerHTML = `
       <div class="draft-steps-label">预计步数</div>
-      <div class="draft-steps-value ${validation?.isValid ? '' : 'error'}">${path.length}</div>
+      <div class="draft-steps-value ${validation?.isValid ? '' : 'error'}">${stepCount}</div>
     `;
     draftInfo.appendChild(stepsRow);
 
@@ -397,12 +410,14 @@ export class FungiGame {
       this.gameState = await createGame(level);
       this.hexGrid.setGameState(this.gameState);
 
+      this.refreshDraftStartCoord();
       this.draftState = {
         isDraftMode: false,
         draftPath: [],
+        draftStartCoord: this.draftState.draftStartCoord,
         validationResult: null,
       };
-      this.hexGrid.setDraftPath([], null);
+      this.hexGrid.setDraftPath([], this.draftState.draftStartCoord, null);
       this.hexGrid.showPathPreview(null);
       this.previewPathCoord = null;
 
@@ -475,19 +490,18 @@ export class FungiGame {
     }
 
     this.validateDraftPath();
-    this.hexGrid.setDraftPath(this.draftState.draftPath, this.draftState.validationResult);
+    this.hexGrid.setDraftPath(this.draftState.draftPath, this.draftState.draftStartCoord, this.draftState.validationResult);
     this.renderPanel();
   }
 
   private validateDraftPath(): void {
     if (!this.gameState) return;
 
-    const lastMyceliumCoord = this.gameState.myceliumCells[this.gameState.myceliumCells.length - 1];
     this.draftState.validationResult = validateDraftPath(
       this.draftState.draftPath,
       this.gameState.cells,
       this.gameState.gridRadius,
-      lastMyceliumCoord
+      this.draftState.draftStartCoord
     );
   }
 
@@ -563,6 +577,21 @@ export class FungiGame {
       this.gameState = await undoMove(this.gameState.id);
       this.hexGrid.setGameState(this.gameState);
       this.hexGrid.showPathPreview(null);
+
+      this.refreshDraftStartCoord();
+      if (this.draftState.isDraftMode && this.draftState.draftPath.length > 0) {
+        const myceliumKeys = new Set(this.gameState.myceliumCells.map(coordKey));
+        this.draftState.draftPath = this.draftState.draftPath.filter(
+          (c) => !myceliumKeys.has(coordKey(c))
+        );
+        this.validateDraftPath();
+        this.hexGrid.setDraftPath(
+          this.draftState.draftPath,
+          this.draftState.draftStartCoord,
+          this.draftState.validationResult
+        );
+      }
+
       this.showMessage('↩️ 已撤销上一步', 'info');
       this.renderPanel();
     } catch (e) {
@@ -581,12 +610,14 @@ export class FungiGame {
       this.gameState = await resetGame(this.gameState.id);
       this.hexGrid.setGameState(this.gameState);
 
+      this.refreshDraftStartCoord();
       this.draftState = {
         isDraftMode: false,
         draftPath: [],
+        draftStartCoord: this.draftState.draftStartCoord,
         validationResult: null,
       };
-      this.hexGrid.setDraftPath([], null);
+      this.hexGrid.setDraftPath([], this.draftState.draftStartCoord, null);
       this.hexGrid.showPathPreview(null);
       this.previewPathCoord = null;
 
@@ -602,13 +633,15 @@ export class FungiGame {
   private handleEnterDraftMode(): void {
     if (!this.gameState || this.gameState.status !== 'playing') return;
 
+    this.refreshDraftStartCoord();
     this.draftState = {
       isDraftMode: true,
       draftPath: [],
+      draftStartCoord: this.draftState.draftStartCoord,
       validationResult: null,
     };
 
-    this.hexGrid.setDraftPath([], null);
+    this.hexGrid.setDraftPath([], this.draftState.draftStartCoord, null);
     this.hexGrid.showPathPreview(null);
     this.previewPathCoord = null;
 
@@ -617,13 +650,15 @@ export class FungiGame {
   }
 
   private handleExitDraftMode(): void {
+    this.refreshDraftStartCoord();
     this.draftState = {
       isDraftMode: false,
       draftPath: [],
+      draftStartCoord: this.draftState.draftStartCoord,
       validationResult: null,
     };
 
-    this.hexGrid.setDraftPath([], null);
+    this.hexGrid.setDraftPath([], this.draftState.draftStartCoord, null);
     this.showMessage('已退出草稿模式', 'info');
     this.renderPanel();
   }
@@ -633,14 +668,14 @@ export class FungiGame {
 
     this.draftState.draftPath.pop();
     this.validateDraftPath();
-    this.hexGrid.setDraftPath(this.draftState.draftPath, this.draftState.validationResult);
+    this.hexGrid.setDraftPath(this.draftState.draftPath, this.draftState.draftStartCoord, this.draftState.validationResult);
     this.renderPanel();
   }
 
   private handleClearDraft(): void {
     this.draftState.draftPath = [];
     this.draftState.validationResult = null;
-    this.hexGrid.setDraftPath([], null);
+    this.hexGrid.setDraftPath([], this.draftState.draftStartCoord, null);
     this.renderPanel();
   }
 
@@ -675,12 +710,14 @@ export class FungiGame {
       this.gameState = currentState;
       this.hexGrid.setGameState(this.gameState);
 
+      this.refreshDraftStartCoord();
       this.draftState = {
         isDraftMode: false,
         draftPath: [],
+        draftStartCoord: this.draftState.draftStartCoord,
         validationResult: null,
       };
-      this.hexGrid.setDraftPath([], null);
+      this.hexGrid.setDraftPath([], this.draftState.draftStartCoord, null);
 
       if (this.gameState.status === 'won') {
         this.showMessage('🎊 恭喜！成功连接所有营养源！', 'success');

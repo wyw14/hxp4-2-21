@@ -52,5 +52,6 @@ export interface PathValidationResult {
 export interface DraftState {
   isDraftMode: boolean;
   draftPath: HexCoord[];
+  draftStartCoord: HexCoord;
   validationResult: PathValidationResult | null;
 }
