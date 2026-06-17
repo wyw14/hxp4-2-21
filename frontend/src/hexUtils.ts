@@ -1,4 +1,4 @@
-import { HexCoord, HexCell, HexType } from './types';
+import { HexCoord, HexCell, HexType, PathValidationResult } from './types';
 
 export const HEX_DIRECTIONS: HexCoord[] = [
   { q: 1, r: 0 },
@@ -145,4 +145,78 @@ export function hexCorners(center: PixelCoord, size: number): PixelCoord[] {
 export function hexCornersPath(center: PixelCoord, size: number): string {
   const corners = hexCorners(center, size);
   return corners.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x} ${c.y}`).join(' ') + ' Z';
+}
+
+export function areHexCoordsAdjacent(a: HexCoord, b: HexCoord): boolean {
+  return hexDistance(a, b) === 1;
+}
+
+export function validateDraftPath(
+  path: HexCoord[],
+  cells: Record<string, HexCell>,
+  gridRadius: number,
+  startCoord: HexCoord
+): PathValidationResult {
+  const result: PathValidationResult = {
+    isValid: true,
+    isContinuous: true,
+    hasPolluted: false,
+    pollutedCoords: [],
+    discontinuousIndices: [],
+    stepCount: Math.max(0, path.length),
+    errors: [],
+  };
+
+  if (path.length === 0) {
+    result.isValid = false;
+    result.errors.push('草稿路径为空');
+    return result;
+  }
+
+  const fullPath = [startCoord, ...path];
+
+  for (let i = 1; i < fullPath.length; i++) {
+    if (!areHexCoordsAdjacent(fullPath[i - 1], fullPath[i])) {
+      result.isContinuous = false;
+      result.isValid = false;
+      result.discontinuousIndices.push(i - 1);
+    }
+  }
+
+  const seenKeys = new Set<string>();
+  for (let i = 0; i < path.length; i++) {
+    const coord = path[i];
+    const key = coordKey(coord);
+
+    if (!isInRadius(coord, gridRadius)) {
+      result.isValid = false;
+      result.errors.push(`第 ${i + 1} 个点超出地图范围`);
+    }
+
+    const cell = cells[key];
+    if (!cell) {
+      result.isValid = false;
+      result.errors.push(`第 ${i + 1} 个点坐标无效`);
+      continue;
+    }
+
+    if (cell.type === HexType.POLLUTED) {
+      result.hasPolluted = true;
+      result.isValid = false;
+      result.pollutedCoords.push(coord);
+      result.errors.push(`第 ${i + 1} 个点位于污染区`);
+    }
+
+    if (seenKeys.has(key)) {
+      result.isValid = false;
+      result.errors.push(`第 ${i + 1} 个点重复`);
+    }
+    seenKeys.add(key);
+  }
+
+  if (!result.isContinuous) {
+    result.errors.unshift('路径不连续，请选择相邻的格子');
+  }
+
+  return result;
 }

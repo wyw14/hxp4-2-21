@@ -304,6 +304,101 @@ body {
   stroke-width: 3;
 }
 
+.hex-cell.draft-cell .hex-shape {
+  cursor: pointer;
+}
+
+.hex-cell.draft-error .hex-shape {
+  animation: errorPulse 1.5s infinite;
+}
+
+@keyframes errorPulse {
+  0%, 100% {
+    filter: brightness(1.3);
+  }
+  50% {
+    filter: brightness(0.8);
+  }
+}
+
+.draft-info {
+  background: rgba(255, 184, 77, 0.08);
+  border: 1px solid rgba(255, 184, 77, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.draft-steps-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.draft-steps-label {
+  font-size: 13px;
+  color: #8a8a9a;
+}
+
+.draft-steps-value {
+  font-size: 28px;
+  font-weight: bold;
+  color: #ffb84d;
+}
+
+.draft-steps-value.error {
+  color: #ff6b6b;
+}
+
+.draft-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.draft-error-item {
+  font-size: 12px;
+  color: #ff6b6b;
+  padding: 6px 10px;
+  background: rgba(255, 107, 107, 0.1);
+  border-radius: 6px;
+  border-left: 3px solid #ff6b6b;
+}
+
+.draft-valid {
+  font-size: 13px;
+  color: #7ed957;
+  padding: 8px 12px;
+  background: rgba(126, 217, 87, 0.1);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.draft-hint {
+  font-size: 12px;
+  color: #8a8a9a;
+  text-align: center;
+  padding: 8px;
+  font-style: italic;
+}
+
+.btn-disabled {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: rgba(255, 255, 255, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.05) !important;
+  cursor: not-allowed !important;
+}
+
+.draft-mode-btn {
+  background: linear-gradient(135deg, #ffb84d, #ff9800) !important;
+  color: #1a1a2e !important;
+}
+
+.draft-mode-btn:hover:not(:disabled) {
+  box-shadow: 0 4px 20px rgba(255, 184, 77, 0.4) !important;
+}
+
 .hex-tooltip {
   position: absolute;
   background: rgba(0, 0, 0, 0.9);

@@ -1,4 +1,4 @@
-import { GameState, HexCell, HexCoord, HexType } from './types';
+import { GameState, HexCell, HexCoord, HexType, PathValidationResult } from './types';
 import {
   coordKey,
   generateHexGrid,
@@ -32,6 +32,10 @@ export class HexGridRenderer {
   private onCellHover?: (coord: HexCoord | null, pixel: PixelCoord | null) => void;
   private cellGroups = new Map<string, SVGGElement>();
   private pathPreviewGroup: SVGGElement | null = null;
+  private draftPathGroup: SVGGElement | null = null;
+  private draftPath: HexCoord[] = [];
+  private draftCellKeys = new Set<string>();
+  private draftValidation: PathValidationResult | null = null;
   private reachableKeys = new Set<string>();
   private offsetX = 0;
   private offsetY = 0;
@@ -50,6 +54,14 @@ export class HexGridRenderer {
   setGameState(game: GameState): void {
     this.gameState = game;
     this.updateReachable();
+    this.render();
+  }
+
+  setDraftPath(path: HexCoord[], validation: PathValidationResult | null): void {
+    this.draftPath = path;
+    this.draftValidation = validation;
+    this.draftCellKeys.clear();
+    path.forEach((coord) => this.draftCellKeys.add(coordKey(coord)));
     this.render();
   }
 
@@ -120,6 +132,8 @@ export class HexGridRenderer {
     if (this.pathPreviewGroup) {
       this.svg.appendChild(this.pathPreviewGroup);
     }
+
+    this.renderDraftPath();
   }
 
   private createCellElement(cell: HexCell): SVGGElement {
@@ -130,7 +144,18 @@ export class HexGridRenderer {
     const cy = pixel.y + this.offsetY;
     const color = COLORS[cell.type];
 
-    g.setAttribute('class', `hex-cell${this.reachableKeys.has(key) ? ' reachable' : ''}`);
+    const isDraftCell = this.draftCellKeys.has(key);
+    const isPollutedDraft = this.draftValidation?.pollutedCoords.some(
+      (c) => coordKey(c) === key
+    );
+    const draftIndex = this.draftPath.findIndex((c) => coordKey(c) === key);
+
+    let cellClass = 'hex-cell';
+    if (this.reachableKeys.has(key)) cellClass += ' reachable';
+    if (isDraftCell) cellClass += ' draft-cell';
+    if (isPollutedDraft) cellClass += ' draft-error';
+
+    g.setAttribute('class', cellClass);
     g.setAttribute('data-q', String(cell.coord.q));
     g.setAttribute('data-r', String(cell.coord.r));
 
@@ -146,7 +171,35 @@ export class HexGridRenderer {
       shape.setAttribute('stroke-dasharray', '4 2');
     }
 
+    if (isDraftCell) {
+      shape.setAttribute('stroke', isPollutedDraft ? '#ff6b6b' : '#ffb84d');
+      shape.setAttribute('stroke-width', '3');
+      shape.setAttribute('stroke-dasharray', 'none');
+      shape.setAttribute('filter', 'brightness(1.3)');
+    }
+
     g.appendChild(shape);
+
+    if (isDraftCell && draftIndex >= 0) {
+      const badge = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      badge.setAttribute('cx', String(cx + this.size * 0.5));
+      badge.setAttribute('cy', String(cy - this.size * 0.5));
+      badge.setAttribute('r', String(this.size * 0.3));
+      badge.setAttribute('fill', isPollutedDraft ? '#ff6b6b' : '#ffb84d');
+      badge.setAttribute('stroke', '#fff');
+      badge.setAttribute('stroke-width', '1.5');
+      g.appendChild(badge);
+
+      const badgeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      badgeText.setAttribute('x', String(cx + this.size * 0.5));
+      badgeText.setAttribute('y', String(cy - this.size * 0.5 + 4));
+      badgeText.setAttribute('text-anchor', 'middle');
+      badgeText.setAttribute('font-size', String(this.size * 0.35));
+      badgeText.setAttribute('font-weight', 'bold');
+      badgeText.setAttribute('fill', '#fff');
+      badgeText.textContent = String(draftIndex + 1);
+      g.appendChild(badgeText);
+    }
 
     this.addCellContent(cell, cx, cy, g);
 
@@ -297,6 +350,59 @@ export class HexGridRenderer {
     }
 
     this.svg.appendChild(this.pathPreviewGroup);
+  }
+
+  private renderDraftPath(): void {
+    if (this.draftPathGroup) {
+      if (this.svg.contains(this.draftPathGroup)) {
+        this.svg.removeChild(this.draftPathGroup);
+      }
+      this.draftPathGroup = null;
+    }
+
+    if (this.draftPath.length === 0 || !this.gameState) return;
+
+    this.draftPathGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    this.draftPathGroup.setAttribute('pointer-events', 'none');
+
+    const fullPath = [this.gameState.startCoord, ...this.draftPath];
+    const hasErrors = this.draftValidation && !this.draftValidation.isValid;
+
+    for (let i = 0; i < fullPath.length - 1; i++) {
+      const p1 = hexToPixel(fullPath[i], this.size);
+      const p2 = hexToPixel(fullPath[i + 1], this.size);
+
+      const isDiscontinuous = this.draftValidation?.discontinuousIndices.includes(i);
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', String(p1.x + this.offsetX));
+      line.setAttribute('y1', String(p1.y + this.offsetY));
+      line.setAttribute('x2', String(p2.x + this.offsetX));
+      line.setAttribute('y2', String(p2.y + this.offsetY));
+      line.setAttribute('stroke', isDiscontinuous ? '#ff6b6b' : '#ffb84d');
+      line.setAttribute('stroke-width', '4');
+      line.setAttribute('stroke-linecap', 'round');
+      line.setAttribute('stroke-dasharray', isDiscontinuous ? '4 4' : '10 5');
+      line.setAttribute('opacity', hasErrors && !isDiscontinuous ? '0.5' : '0.9');
+      this.draftPathGroup.appendChild(line);
+    }
+
+    for (let i = 0; i < this.draftPath.length; i++) {
+      const p = hexToPixel(this.draftPath[i], this.size);
+      const isPolluted = this.draftValidation?.pollutedCoords.some(
+        (c) => coordKey(c) === coordKey(this.draftPath[i])
+      );
+
+      const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      arrow.setAttribute('cx', String(p.x + this.offsetX));
+      arrow.setAttribute('cy', String(p.y + this.offsetY));
+      arrow.setAttribute('r', String(5));
+      arrow.setAttribute('fill', isPolluted ? '#ff6b6b' : '#ffb84d');
+      arrow.setAttribute('opacity', '0.8');
+      this.draftPathGroup.appendChild(arrow);
+    }
+
+    this.svg.appendChild(this.draftPathGroup);
   }
 
   destroy(): void {

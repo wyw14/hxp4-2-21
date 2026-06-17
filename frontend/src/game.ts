@@ -1,8 +1,8 @@
 import './styles.css';
-import { GameState, HexCoord, HexType } from './types';
+import { GameState, HexCoord, HexType, PathValidationResult, DraftState } from './types';
 import { HexGridRenderer } from './hexGrid';
 import { createGame, getGame, extendMycelium, undoMove, resetGame, findPath } from './api';
-import { coordKey, findPathAStar, PixelCoord } from './hexUtils';
+import { coordKey, findPathAStar, PixelCoord, validateDraftPath, areHexCoordsAdjacent } from './hexUtils';
 
 type MessageType = 'info' | 'success' | 'error';
 
@@ -21,6 +21,11 @@ export class FungiGame {
   private messageTimeout: any = null;
   private isProcessing = false;
   private previewPathCoord: HexCoord | null = null;
+  private draftState: DraftState = {
+    isDraftMode: false,
+    draftPath: [],
+    validationResult: null,
+  };
 
   constructor() {
     const hexContainer = document.getElementById('hex-container')!;
@@ -68,6 +73,11 @@ export class FungiGame {
     if (this.gameState) {
       const statsSection = this.createStatsSection();
       this.ui.panelContainer.appendChild(statsSection);
+
+      if (this.draftState.isDraftMode) {
+        const draftSection = this.createDraftSection();
+        this.ui.panelContainer.appendChild(draftSection);
+      }
 
       const controlsSection = this.createControlsSection();
       this.ui.panelContainer.appendChild(controlsSection);
@@ -158,6 +168,84 @@ export class FungiGame {
     return section;
   }
 
+  private createDraftSection(): HTMLElement {
+    const section = document.createElement('div');
+    section.innerHTML = `<div class="section-title">📝 路线草稿</div>`;
+
+    const validation = this.draftState.validationResult;
+    const path = this.draftState.draftPath;
+
+    const draftInfo = document.createElement('div');
+    draftInfo.className = 'draft-info';
+
+    const stepsRow = document.createElement('div');
+    stepsRow.className = 'draft-steps-row';
+    stepsRow.innerHTML = `
+      <div class="draft-steps-label">预计步数</div>
+      <div class="draft-steps-value ${validation?.isValid ? '' : 'error'}">${path.length}</div>
+    `;
+    draftInfo.appendChild(stepsRow);
+
+    if (validation && !validation.isValid) {
+      const errorList = document.createElement('div');
+      errorList.className = 'draft-errors';
+      validation.errors.forEach((err) => {
+        const errorItem = document.createElement('div');
+        errorItem.className = 'draft-error-item';
+        errorItem.textContent = '⚠️ ' + err;
+        errorList.appendChild(errorItem);
+      });
+      draftInfo.appendChild(errorList);
+    } else if (path.length > 0) {
+      const validBadge = document.createElement('div');
+      validBadge.className = 'draft-valid';
+      validBadge.textContent = '✅ 路径有效，可执行';
+      draftInfo.appendChild(validBadge);
+    }
+
+    if (path.length === 0) {
+      const hint = document.createElement('div');
+      hint.className = 'draft-hint';
+      hint.textContent = '💡 点击格子添加到草稿路径，再次点击可移除';
+      draftInfo.appendChild(hint);
+    }
+
+    section.appendChild(draftInfo);
+
+    const draftControls = document.createElement('div');
+    draftControls.className = 'controls';
+
+    const undoDraftBtn = document.createElement('button');
+    undoDraftBtn.className = 'btn btn-secondary';
+    undoDraftBtn.innerHTML = '↩️ 移除最后一个';
+    undoDraftBtn.disabled = path.length === 0;
+    undoDraftBtn.onclick = () => this.handleUndoDraftPoint();
+    draftControls.appendChild(undoDraftBtn);
+
+    const clearDraftBtn = document.createElement('button');
+    clearDraftBtn.className = 'btn btn-secondary';
+    clearDraftBtn.innerHTML = '🗑️ 清空草稿';
+    clearDraftBtn.disabled = path.length === 0;
+    clearDraftBtn.onclick = () => this.handleClearDraft();
+    draftControls.appendChild(clearDraftBtn);
+
+    const executeBtn = document.createElement('button');
+    executeBtn.className = `btn ${validation?.isValid ? 'btn-primary' : 'btn-disabled'}`;
+    executeBtn.innerHTML = '▶️ 执行路径';
+    executeBtn.disabled = !validation?.isValid || this.isProcessing;
+    executeBtn.onclick = () => this.handleExecuteDraft();
+    draftControls.appendChild(executeBtn);
+
+    const exitBtn = document.createElement('button');
+    exitBtn.className = 'btn btn-danger';
+    exitBtn.innerHTML = '❌ 退出草稿模式';
+    exitBtn.onclick = () => this.handleExitDraftMode();
+    draftControls.appendChild(exitBtn);
+
+    section.appendChild(draftControls);
+    return section;
+  }
+
   private createControlsSection(): HTMLElement {
     const section = document.createElement('div');
     section.innerHTML = `<div class="section-title">操作</div>`;
@@ -165,10 +253,19 @@ export class FungiGame {
     const controls = document.createElement('div');
     controls.className = 'controls';
 
+    if (!this.draftState.isDraftMode) {
+      const draftBtn = document.createElement('button');
+      draftBtn.className = 'btn btn-secondary draft-mode-btn';
+      draftBtn.innerHTML = '📝 路线草稿模式';
+      draftBtn.disabled = this.isProcessing || this.gameState!.status !== 'playing';
+      draftBtn.onclick = () => this.handleEnterDraftMode();
+      controls.appendChild(draftBtn);
+    }
+
     const undoBtn = document.createElement('button');
     undoBtn.className = 'btn btn-secondary';
     undoBtn.innerHTML = '↩️ 撤销上一步';
-    undoBtn.disabled = this.gameState!.myceliumCells.length <= 1 || this.isProcessing;
+    undoBtn.disabled = this.gameState!.myceliumCells.length <= 1 || this.isProcessing || this.draftState.isDraftMode;
     undoBtn.onclick = () => this.handleUndo();
     controls.appendChild(undoBtn);
 
@@ -215,6 +312,14 @@ export class FungiGame {
       <div class="legend-item">
         <div class="legend-color" style="background: #2a2a4a; border: 1px dashed #7ed957;"></div>
         <div class="legend-text">⬜ 可蔓延区域（虚线框）</div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #2a2a4a; border: 2px solid #ffb84d;"></div>
+        <div class="legend-text">📝 草稿路径（橙色）</div>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #2a2a4a; border: 2px solid #ff6b6b;"></div>
+        <div class="legend-text">❌ 草稿错误（红色）</div>
       </div>
     `;
 
@@ -291,6 +396,16 @@ export class FungiGame {
     try {
       this.gameState = await createGame(level);
       this.hexGrid.setGameState(this.gameState);
+
+      this.draftState = {
+        isDraftMode: false,
+        draftPath: [],
+        validationResult: null,
+      };
+      this.hexGrid.setDraftPath([], null);
+      this.hexGrid.showPathPreview(null);
+      this.previewPathCoord = null;
+
       this.showMessage(`第 ${level} 关开始！连接所有腐木营养源`, 'success');
       this.renderPanel();
     } catch (e) {
@@ -306,6 +421,11 @@ export class FungiGame {
     const key = coordKey(coord);
     const cell = this.gameState.cells[key];
     if (!cell) return;
+
+    if (this.draftState.isDraftMode) {
+      this.handleDraftCellClick(coord, key);
+      return;
+    }
 
     if (cell.type === HexType.POLLUTED) {
       this.showMessage('⚠️ 不能蔓延到重金属污染区！', 'error');
@@ -334,6 +454,43 @@ export class FungiGame {
     }
   }
 
+  private handleDraftCellClick(coord: HexCoord, key: string): void {
+    if (!this.gameState) return;
+
+    const myceliumKeys = new Set(this.gameState.myceliumCells.map(coordKey));
+    if (myceliumKeys.has(key)) {
+      this.showMessage('⚠️ 该位置已被菌丝覆盖，不能加入草稿', 'error');
+      return;
+    }
+
+    const draftIndex = this.draftState.draftPath.findIndex((c) => coordKey(c) === key);
+    if (draftIndex !== -1) {
+      this.draftState.draftPath.splice(draftIndex, 1);
+    } else {
+      const cell = this.gameState.cells[key];
+      if (cell.type === HexType.POLLUTED) {
+        this.showMessage('⚠️ 污染区不能加入草稿路径', 'error');
+      }
+      this.draftState.draftPath.push(coord);
+    }
+
+    this.validateDraftPath();
+    this.hexGrid.setDraftPath(this.draftState.draftPath, this.draftState.validationResult);
+    this.renderPanel();
+  }
+
+  private validateDraftPath(): void {
+    if (!this.gameState) return;
+
+    const lastMyceliumCoord = this.gameState.myceliumCells[this.gameState.myceliumCells.length - 1];
+    this.draftState.validationResult = validateDraftPath(
+      this.draftState.draftPath,
+      this.gameState.cells,
+      this.gameState.gridRadius,
+      lastMyceliumCoord
+    );
+  }
+
   private handleCellHover(coord: HexCoord | null, pixel: PixelCoord | null): void {
     if (!this.gameState) return;
 
@@ -351,6 +508,19 @@ export class FungiGame {
     const key = coordKey(coord);
     const cell = this.gameState.cells[key];
     if (!cell) return;
+
+    if (this.draftState.isDraftMode) {
+      const draftIndex = this.draftState.draftPath.findIndex((c) => coordKey(c) === key) + 1;
+      const statusText = draftIndex > 0 ? `（草稿第 ${draftIndex} 步，点击可移除）` : '（点击加入草稿）';
+      this.tooltipEl = document.createElement('div');
+      this.tooltipEl.className = 'hex-tooltip';
+      this.tooltipEl.style.left = `${pixel.x}px`;
+      this.tooltipEl.style.top = `${pixel.y}px`;
+      const cellName = this.getCellDisplayName(cell);
+      this.tooltipEl.textContent = `${cellName} ${statusText}`;
+      document.body.appendChild(this.tooltipEl);
+      return;
+    }
 
     const myceliumSet = new Set(this.gameState.myceliumCells.map(coordKey));
     if (!myceliumSet.has(key)) {
@@ -410,11 +580,119 @@ export class FungiGame {
     try {
       this.gameState = await resetGame(this.gameState.id);
       this.hexGrid.setGameState(this.gameState);
+
+      this.draftState = {
+        isDraftMode: false,
+        draftPath: [],
+        validationResult: null,
+      };
+      this.hexGrid.setDraftPath([], null);
       this.hexGrid.showPathPreview(null);
+      this.previewPathCoord = null;
+
       this.showMessage('🔄 关卡已重置', 'info');
       this.renderPanel();
     } catch (e) {
       this.showMessage(e instanceof Error ? e.message : '重置失败', 'error');
+    } finally {
+      this.setProcessing(false);
+    }
+  }
+
+  private handleEnterDraftMode(): void {
+    if (!this.gameState || this.gameState.status !== 'playing') return;
+
+    this.draftState = {
+      isDraftMode: true,
+      draftPath: [],
+      validationResult: null,
+    };
+
+    this.hexGrid.setDraftPath([], null);
+    this.hexGrid.showPathPreview(null);
+    this.previewPathCoord = null;
+
+    this.showMessage('📝 已进入草稿模式，点击格子规划路径', 'info');
+    this.renderPanel();
+  }
+
+  private handleExitDraftMode(): void {
+    this.draftState = {
+      isDraftMode: false,
+      draftPath: [],
+      validationResult: null,
+    };
+
+    this.hexGrid.setDraftPath([], null);
+    this.showMessage('已退出草稿模式', 'info');
+    this.renderPanel();
+  }
+
+  private handleUndoDraftPoint(): void {
+    if (this.draftState.draftPath.length === 0) return;
+
+    this.draftState.draftPath.pop();
+    this.validateDraftPath();
+    this.hexGrid.setDraftPath(this.draftState.draftPath, this.draftState.validationResult);
+    this.renderPanel();
+  }
+
+  private handleClearDraft(): void {
+    this.draftState.draftPath = [];
+    this.draftState.validationResult = null;
+    this.hexGrid.setDraftPath([], null);
+    this.renderPanel();
+  }
+
+  private async handleExecuteDraft(): Promise<void> {
+    if (!this.gameState || !this.draftState.validationResult?.isValid) return;
+
+    this.setProcessing(true);
+    this.showMessage('正在执行草稿路径...', 'info');
+
+    try {
+      let currentState = this.gameState;
+      let successCount = 0;
+      let nutrientConnected = false;
+
+      for (const coord of this.draftState.draftPath) {
+        const key = coordKey(coord);
+        const cell = currentState.cells[key];
+
+        currentState = await extendMycelium(currentState.id, coord);
+        successCount++;
+
+        if (cell?.type === HexType.NUTRIENT && cell.nutrientId && 
+            currentState.connectedNutrients.includes(cell.nutrientId)) {
+          nutrientConnected = true;
+        }
+
+        if (currentState.status === 'won') {
+          break;
+        }
+      }
+
+      this.gameState = currentState;
+      this.hexGrid.setGameState(this.gameState);
+
+      this.draftState = {
+        isDraftMode: false,
+        draftPath: [],
+        validationResult: null,
+      };
+      this.hexGrid.setDraftPath([], null);
+
+      if (this.gameState.status === 'won') {
+        this.showMessage('🎊 恭喜！成功连接所有营养源！', 'success');
+      } else if (nutrientConnected) {
+        this.showMessage(`✅ 成功执行 ${successCount} 步，连接了营养源！`, 'success');
+      } else {
+        this.showMessage(`✅ 成功执行 ${successCount} 步`, 'success');
+      }
+
+      this.renderPanel();
+    } catch (e) {
+      this.showMessage(e instanceof Error ? e.message : '执行失败', 'error');
     } finally {
       this.setProcessing(false);
     }

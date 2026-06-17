@@ -38,3 +38,19 @@ export interface ApiResponse<T = void> {
   data?: T;
   error?: string;
 }
+
+export interface PathValidationResult {
+  isValid: boolean;
+  isContinuous: boolean;
+  hasPolluted: boolean;
+  pollutedCoords: HexCoord[];
+  discontinuousIndices: number[];
+  stepCount: number;
+  errors: string[];
+}
+
+export interface DraftState {
+  isDraftMode: boolean;
+  draftPath: HexCoord[];
+  validationResult: PathValidationResult | null;
+}
